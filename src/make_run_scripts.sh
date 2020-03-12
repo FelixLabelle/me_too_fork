@@ -12,11 +12,12 @@ count=0
 file_idx=0
 
 run_script="run_scripts/${file_idx}.run.sh"
+echo "Input directory is "${IN_DIR}
 echo "#!/bin/bash" > $run_script
 chmod +x $run_script
 
-for f in ${IN_DIR} ; do
-
+for f in ${IN_DIR}; do
+  echo $f
   # start a new script
   if [[ "$count" -gt "$jobs_per_file" ]]; then
       count=0
@@ -29,12 +30,10 @@ for f in ${IN_DIR} ; do
 
   new_name=${f/.elmo/.hdf5}
   full_new_name=${new_name/raw_tokenized/embeddings}
-
   echo "if [ ! -f $full_new_name ]; then" >> $run_script
   echo "    source activate py36 && allennlp elmo $f $full_new_name --all" >> $run_script
   echo "fi" >> $run_script
   echo "" >> $run_script
-
   count=$((count+1))
 
 done
