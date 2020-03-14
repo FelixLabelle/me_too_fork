@@ -14,7 +14,7 @@ EVAL_SCORE_CACHE="subject_entities_limit.pickle"
 
 # Run stanford NLP pipleine over all texts
 #find $RAW_ARTICLES_DIR -name "*txt" > filelist.txt
-#java -Xmx3g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse,dcoref,depparse -filelist filelist.txt -outputDirectory $NLP_OUTPUT_DIR
+java -Xmx3g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse, dcoreref,depparse -filelist filelist.txt -outputDirectory $NLP_OUTPUT_DIR
 
 # Use output of parser to build tokenized files
 NLP_OUTPUT_DIR="../outputs" # I copied these over to tir
@@ -23,7 +23,7 @@ python prep_elmo.py --input_glob "$NLP_OUTPUT_DIR/*.xml" --output_dir $ELMO_INPU
 # Extract elmo embeddings over all files
 ./make_run_scripts.sh "$ELMO_INPUT_DIR/*.elmo"  # NOTE: may need to change locations / job numbers in make_run_scripts.sh
 # Then need to run the generated run scripts: e.g. sbatch run_elmo_night.sh
-
+../run_scripts/0.run.sh
 # Cache all verbs and entities from elmo embeddings
 python match_parse.py --cache $MATCHED_EMBEDDING_CACHE --nlp_path $NLP_OUTPUT_DIR --embed_path $ELMO_OUTPUT_DIR
 
