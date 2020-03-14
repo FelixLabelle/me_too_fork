@@ -1,8 +1,8 @@
 # Downloaded lexicons
-CONNO_FRAME="/projects/tir3/users/anjalief/lexicons/annotated_connotation_frames/full_frame_info.txt"
-CONNO_DIR="/projects/tir3/users/anjalief/lexicons/annotated_connotation_frames/"
-POWER_AGENCY="/projects/tir3/users/anjalief/lexicons/agency_power.csv"
-RAW_CONNOTATIONS="/projects/tir3/users/anjalief/lexicons/annotated_connotation_frames/raw_cf_anonymized_output.csv"
+CONNO_FRAME="../frames/full_frame_info.txt"
+CONNO_DIR="../frames/annotated_connotation_frames/"
+POWER_AGENCY="../frames/agency_power.csv"
+RAW_CONNOTATIONS="../frames/lexicons/annotated_connotation_frames/raw_cf_anonymized_output.csv"
 
 # Generated for this project
 METOO_META="/projects/tir3/users/anjalief/corpora/data_pull2_no_dupl.meta"

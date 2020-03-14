@@ -243,19 +243,19 @@ def main():
     # work over different pairs sets. Run the evaluation once over everyone to get
     # the pairs. Then run actual evaluations only over pairs we have all scores for
 
-    auto_pairs = pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY, verbose=False)
-    freq_pairs = pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, verbose=False)
-    raw_pairs = pairwise_compare(raw_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, verbose = False)
+    auto_pairs = pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY)
+    freq_pairs = pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY)
+    raw_pairs = pairwise_compare(raw_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY)
     merged_pairs = auto_pairs.intersection(freq_pairs, raw_pairs)
 
 
     # Now run the actual evaluations
     print("COMPLETE AUTOMATED")
-    pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs, verbose=True)
+    pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs)
     print("FREQ SCORES")
-    pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs, verbose=True)
+    pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs)
     print("RAW SCORES")
-    pairwise_compare(raw_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs, verbose=True)
+    pairwise_compare(raw_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs)
     print("ANNOTATOR SCORES")
     gold_pairwise_compare(ARTICLE_COUNTS, pairs_to_keep = merged_pairs)
     print("#######################################################################################")
@@ -264,20 +264,20 @@ def main():
     # Compare that to the frequency mentions, since we should have frequency scores for everybody
     merged_pairs = auto_pairs.intersection(freq_pairs)
     print("COMPLETE AUTOMATED")
-    pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs, verbose=True)
+    pairwise_compare(entity_to_our_score, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs)
     print("FREQ SCORES")
-    pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs, verbose=True)
+    pairwise_compare(freq_scores, ARTICLE_COUNTS, agree_only=AGREE_ONLY, pairs_to_keep = merged_pairs)
 
     # Now run the hand annotations. We only annotated the first 10 articles
     # This is independent of others
     print("##################### HAND ANNOTATIONS ####################################")
     key_to_embeds, key_to_signs, m = process_idx_files(cfg.AZIZ_HAND_PARSED)
     hand_to_score = score_keyed_embeddings(key_to_embeds, key_to_signs, m, avg_embeddings)
-    hand_pairs = pairwise_compare(hand_to_score, [5, 10], agree_only=False, verbose=True)
+    hand_pairs = pairwise_compare(hand_to_score, [5, 10], agree_only=False)
     print("COMPLETE AUTOMATED")
-    pairwise_compare(entity_to_our_score, [5, 10], agree_only=AGREE_ONLY, pairs_to_keep = hand_pairs, verbose=True)
+    pairwise_compare(entity_to_our_score, [5, 10], agree_only=AGREE_ONLY, pairs_to_keep = hand_pairs)
     print("FREQ SCORES")
-    pairwise_compare(freq_scores, [5, 10], agree_only=AGREE_ONLY, pairs_to_keep = hand_pairs, verbose=True)
+    pairwise_compare(freq_scores, [5, 10], agree_only=AGREE_ONLY, pairs_to_keep = hand_pairs)
     print("ANNOTATOR SCORES")
     gold_pairwise_compare(ARTICLE_COUNTS, pairs_to_keep = hand_pairs)
 
@@ -285,7 +285,7 @@ def main():
     print("###################################### CORRELATIONS #############################")
     compare_corr(entity_to_our_score)
     print("###################################### Inter-annotator correlations #############")
-    get_annotations(restrict_match=True, verbose=True)
+    get_annotations(restrict_match=True)
 
 
 

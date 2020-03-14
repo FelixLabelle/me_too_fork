@@ -23,7 +23,7 @@ from spacy.lemmatizer import Lemmatizer
 from spacy.lang.en import LEMMA_INDEX, LEMMA_EXC, LEMMA_RULES
 lemmatizer = Lemmatizer(LEMMA_INDEX, LEMMA_EXC, LEMMA_RULES)
 
-VerbInstance = namedtuple('VerbInstance', ['sent_id', 'verb_id', 'verb', 'verb_lemma', 'relation', 'entity_raw', 'entity_name', 'filename'], verbose=False)
+VerbInstance = namedtuple('VerbInstance', ['sent_id', 'verb_id', 'verb', 'verb_lemma', 'relation', 'entity_raw', 'entity_name', 'filename'])
 
 # Not explicitly called for generating the cache, but can be used to sanity check file alignment
 def check_match(h5py_file, xml_file):
