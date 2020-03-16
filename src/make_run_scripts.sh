@@ -17,7 +17,6 @@ echo "#!/bin/bash" > $run_script
 chmod +x $run_script
 
 for f in ${IN_DIR}; do
-  echo $f
   # start a new script
   if [[ "$count" -gt "$jobs_per_file" ]]; then
       count=0
