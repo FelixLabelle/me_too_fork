@@ -8,14 +8,19 @@ MATCHED_EMBEDDING_CACHE="." #./tools/metoo010_matched_tupl.pickle"
 PRETRAINING_DATA="/mnt/data/NYT_data"
 EVAL_SCORE_CACHE="subject_entities_limit.pickle"
 
-PARSE_FILES=false
+
+#ELMO_INPUT_DIR="../outputs" # Directory to store input to ELMo
+#ELMO_OUTPUT_DIR="../outputs" # This should be the same as ELMO_INPUT_DIR but with "raw_tokenized" replaced with "embeddings"
+#NLP_OUTPUT_DIR="../outputs" # I copied these over to tir
+
+PARSE_FILES=true
 EXTRACT_ELMO=false
-CREATE_CACHE=true
+CREATE_CACHE=false
 EVALUATE_DATA=false
 
 if $PARSE_FILES; then
 	find $PRETRAINING_DATA -name "*txt" > filelist.txt
-	java -Xmx3g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse, dcoreref,depparse -filelist filelist.txt -outputDirectory $NLP_OUTPUT_DIR
+	java -Xmx3g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse,dcoref,depparse -filelist filelist.txt -outputDirectory $NLP_OUTPUT_DIR
 fi
 
 if $EXTRACT_ELMO; then
@@ -38,10 +43,8 @@ fi
 if $EVALUATE_DATA; then
 	# Run evaluation over verbs
 	python weighted_tests.py --cache $MATCHED_EMBEDDING_CACHE --from_scratch
-
 	# Run evalulations against power scripts
 	python metoo_eval.py --embedding_cache $MATCHED_EMBEDDING_CACHE --score_cache $EVAL_SCORE_CACHE
-
 	# Run analyses in paper
 	python metoo_analysis.py --embedding_cache $MATCHED_EMBEDDING_CACHE
 fi
