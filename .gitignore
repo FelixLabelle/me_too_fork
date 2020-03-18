@@ -1,3 +1,5 @@
 src/*.pickle
 src/__pycache__
 src/*.png
+src/run_scripts/*
+src/*.txt

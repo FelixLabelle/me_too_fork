@@ -201,7 +201,6 @@ def main():
     parser.add_argument("--cache")
     parser.add_argument("--from_scratch", action='store_true')
     args = parser.parse_args()
-
     # other parameters don't matter when we read from the cache
     embeddings = get_token_embeddings("", [], weights=[0,1,0], cache_name=args.cache)
     embeddings.normalize()

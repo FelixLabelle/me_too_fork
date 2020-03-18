@@ -203,7 +203,7 @@ def make_embeddings(nlp_path, embed_path, cache_name):
     entity_to_idxs = defaultdict(list)
     file_to_sents = {}
     i = 0
-    import pdb;pdb.set_trace()
+    #import pdb;pdb.set_trace()
     for tupl_to_embeds, idx_to_sent, filename in out_data:
         file_to_sents[filename] = idx_to_sent
         for tupl, vec in tupl_to_embeds.items():
