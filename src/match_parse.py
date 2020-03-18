@@ -14,6 +14,18 @@ import multiprocessing
 import os
 import glob
 import argparse
+import logging
+
+logger = logging.getLogger('matched_parser')
+logger.setLevel(logging.DEBUG)
+# create file handler which logs even debug messages
+fh = logging.FileHandler('matched_parser.log')
+fh.setLevel(logging.DEBUG)
+# create formatter and add it to the handlers
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+# add the handlers to the logger
+logger.addHandler(fh)
 
 NUM_PROCESSES=20
 
@@ -46,60 +58,68 @@ def check_match(h5py_file, xml_file):
             assert sent == sents[int(sent_idx)]
 
 def extract_entities(filename):
+    """
+    First iterate through coreferences and get all the mentions. Iterate through this references dependenencies and map the reference to verbs.
+    THen create a direct mapping that contains the setence and verb id to the entity
+    """
+    logger.info("Processing entities for file {}".format(filename))
     root, full_doc = process_xml_text(filename)
-
+    logger.info("Starting to extract entities for  file {}".format(filename))
     name_to_verbs = defaultdict(list)
-    for coref in root.find('document').find('coreference').iter('coreference'):
-        verbs_to_cache = []
-        name = "Unknown"
-        for mention in coref.findall('mention'):
-            if 'representative' in mention.attrib:
-                name = mention.find('text').text
+    
+    final_verb_dict = {}
+    id_to_sent={}
+    try:
+        for coref in root.find('document').find('coreference').iter('coreference'):
+            verbs_to_cache = []
+            name = "Unknown"
+            for mention in coref.findall('mention'):
+                if 'representative' in mention.attrib:
+                    name = mention.find('text').text
 
-            sent_id = int(mention.find('sentence').text) - 1
+                sent_id = int(mention.find('sentence').text) - 1
 
-            sentence = root.find('document').find('sentences')[sent_id]
-            for dep in sentence.find('dependencies').iter('dep'):
-                if int(dep.find('dependent').get("idx")) != int(mention.find('end').text) - 1:
+                sentence = root.find('document').find('sentences')[sent_id]
+                for dep in sentence.find('dependencies').iter('dep'):
+                    if int(dep.find('dependent').get("idx")) != int(mention.find('end').text) - 1:
+                        continue
+
+                    parent_id = int(dep.find('governor').get("idx")) - 1
+                    parent = dep.find('governor').text
+
+                    parent_lemma = sentence.find('tokens')[int(parent_id)].find('lemma').text
+
+                    # We save the sentence id, the parent id, the entity name, the relationship, the article number
+                    # With sentence id and parent id we can find embedding
+                    if dep.get("type") in ["nsubj", "nsubjpass", "dobj"]:
+                        verbs_to_cache.append(VerbInstance(sent_id, parent_id, parent, parent_lemma, dep.get("type"),  mention.find('text').text, "", filename))
+
+            # end coreff chain
+            # We do it this way so that if we set the name in the middle of the chain we keep it for all things in the chain
+            if verbs_to_cache:
+                name_to_verbs[name] += verbs_to_cache
+
+        for name,tupls in name_to_verbs.items():
+            for t in tupls:
+                key = (t.sent_id, t.verb_id)
+                final_verb_dict[key] = t._replace(entity_name=name)
+
+        # Also keep all verbs that are in lex
+        for s in root.find('document').find('sentences').iter('sentence'):
+            sent = []
+            for tok in s.find('tokens').iter('token'):
+                sent.append(tok.find("word").text.lower())
+                sent_id = int(s.get("id")) - 1
+                verb_id = int(tok.get("id")) - 1
+                key = (sent_id, verb_id)
+                if key in final_verb_dict:
                     continue
 
-                parent_id = int(dep.find('governor').get("idx")) - 1
-                parent = dep.find('governor').text
-
-                parent_lemma = sentence.find('tokens')[int(parent_id)].find('lemma').text
-
-                # We save the sentence id, the parent id, the entity name, the relationship, the article number
-                # With sentence id and parent id we can find embedding
-                if dep.get("type") in ["nsubj", "nsubjpass", "dobj"]:
-                    verbs_to_cache.append(VerbInstance(sent_id, parent_id, parent, parent_lemma, dep.get("type"),  mention.find('text').text, "", filename))
-
-        # end coreff chain
-        # We do it this way so that if we set the name in the middle of the chain we keep it for all things in the chain
-        if verbs_to_cache:
-            name_to_verbs[name] += verbs_to_cache
-
-    final_verb_dict = {}
-    for name,tupls in name_to_verbs.items():
-        for t in tupls:
-            key = (t.sent_id, t.verb_id)
-            final_verb_dict[key] = t._replace(entity_name=name)
-
-    id_to_sent={}
-    # Also keep all verbs that are in lex
-    for s in root.find('document').find('sentences').iter('sentence'):
-        sent = []
-        for tok in s.find('tokens').iter('token'):
-            sent.append(tok.find("word").text.lower())
-            sent_id = int(s.get("id")) - 1
-            verb_id = int(tok.get("id")) - 1
-            key = (sent_id, verb_id)
-            if key in final_verb_dict:
-                continue
-
-            if tok.find('POS').text.startswith("VB"):
-                final_verb_dict[key] = VerbInstance(sent_id, verb_id, tok.find("word").text, tok.find('lemma').text.lower(), "", "", "", filename)
-        id_to_sent[sent_id] = " ".join(sent)
-
+                if tok.find('POS').text.startswith("VB"):
+                    final_verb_dict[key] = VerbInstance(sent_id, verb_id, tok.find("word").text, tok.find('lemma').text.lower(), "", "", "", filename)
+            id_to_sent[sent_id] = " ".join(sent)
+    except Exception as e:
+        logger.error("Error {} occured for file {}".format(e, filename))
     return final_verb_dict, id_to_sent
 
 def get_embeddings(f, verb_dict, nlp_id_to_sent, weights=[0,1,0]):
@@ -109,7 +129,7 @@ def get_embeddings(f, verb_dict, nlp_id_to_sent, weights=[0,1,0]):
     try:
         with h5py.File(f, 'r') as h5py_file:
             sent_to_idx = ast.literal_eval(h5py_file.get("sentence_to_index")[0])
-
+            logger.info("Length of file {} is {} compared to {}".format(f,len(h5py_file),len(nlp_id_to_sent)))
             assert(len(h5py_file) - 1 == len(nlp_id_to_sent)), str(len(h5py_file) - 1)
 
             for s in sent_to_idx:
@@ -137,21 +157,25 @@ def get_embeddings(f, verb_dict, nlp_id_to_sent, weights=[0,1,0]):
                                         s1[1][tupl.verb_id] * weights[1] +
                                         s1[2][tupl.verb_id] * weights[2])
     except UnicodeEncodeError:
-        print("Unicode error, probably on mismatch")
+        logger.error("Unicode error, probably on mismatch")
     except OSError:
-        print("OSError", f)
+        logger.error("OSError", f)
     except KeyError:
-        print("KeyError", f)
+        logger.error("KeyError", f)
+    except Exception as e:
+        logger.error("An unexpected error {} occured for file {}".format(e,f))
 
     return tupl_to_embeds, idx_to_sent
 
 def process_file(filename):
+    logger.info("Starting to process file {}".format(filename))
     nlp_file = os.path.join(NLP_PATH, filename)
     verb_dict, id_to_sent = extract_entities(nlp_file)
     h5_file = os.path.join(EMBED_PATH, filename) + ".hdf5"
-
+    logger.info("The verb dict and id mappings for {} are {} \n {}".format(filename,verb_dict,id_to_sent))
     # h5_file format is "9978.txt.xml.hdf5"
     tupl_to_embeds, idx_to_sent = get_embeddings(h5_file, verb_dict, id_to_sent)
+    logger.info("Done with file {}".format(filename))
     return tupl_to_embeds, idx_to_sent, filename
 
 
@@ -162,8 +186,9 @@ def make_embeddings(nlp_path, embed_path, cache_name):
     EMBED_PATH = embed_path
     # filename format is "9978.txt.xml"
 
-
+    # Load all processed files
     filenames = [os.path.basename(f) for f in glob.iglob(os.path.join(nlp_path, "*.xml"))]
+    # Filter all files that don't have elmo embeddings
     filenames = [f for f in filenames if os.path.exists(os.path.join(embed_path, f) + ".hdf5")]
 
     pool = multiprocessing.Pool(processes=NUM_PROCESSES)
@@ -178,7 +203,7 @@ def make_embeddings(nlp_path, embed_path, cache_name):
     entity_to_idxs = defaultdict(list)
     file_to_sents = {}
     i = 0
-
+    import pdb;pdb.set_trace()
     for tupl_to_embeds, idx_to_sent, filename in out_data:
         file_to_sents[filename] = idx_to_sent
         for tupl, vec in tupl_to_embeds.items():
@@ -188,7 +213,7 @@ def make_embeddings(nlp_path, embed_path, cache_name):
             word_to_idxs[tupl.verb_lemma].append(i)
             entity_to_idxs[tupl.entity_name].append(i)
             i += 1
-
+    
     vectors = np.vstack(vectors)
     assert vectors.shape[1] == 1024, "Weird vector length: " + str(vectors.shape)
     embed = TokenEmbedding(vectors, vocab, word_to_idxs, entity_dict=entity_to_idxs, file_to_sents=file_to_sents, normalize=True, tupls=tupls)
