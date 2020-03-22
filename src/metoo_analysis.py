@@ -379,13 +379,14 @@ def main():
     print_top100(entity_to_agency_count, entity_to_agency_score, print_header="Agency")
 
     print("######################################  Figures 2 and 3 #####################################################")
+    # Identify entities of interest to us
     target_entities = ["Donald Trump", "Hillary Clinton", "Al Franken", "Roy Moore", "Rose McGowan", "Leeann Tweeden", "Harvey Weinstein", "Bill Cosby"]
     for e in target_entities:
         print(e, entity_to_sent_score[e], entity_to_power_score[e])
     if args.print_statistics:
         print_statistics(entity_to_values, target_entities, "Sentiment")
         print_statistics(entity_to_power_values, target_entities, "Power")
-
+    '''
     # Figure 4
     print("######################################  Outlet Franken Moore (Figure 4) #####################################################")
     franken_to_score, franken_to_values = most_positive_entities(embeddings, avg_embeddings, subject_header="Perspective(ws)", object_header="Perspective(wo)", by_outlet=True, filter_set=['Al Franken'])
@@ -402,6 +403,7 @@ def main():
         print_statistics(outlet_key_to_values, list(outlet_key_to_values.keys()), "Sentiment")
 
     aziz_analysis(embeddings, avg_embeddings, args.print_statistics)
+    '''
     return
 
 
