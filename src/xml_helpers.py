@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 import spacy
-en_nlp = spacy.load('en')
+en_nlp = spacy.load('en_core_web_sm')
 import gzip
 
 def process_xml_text(filename, stem=True, correct_idx=True, lower = False):
