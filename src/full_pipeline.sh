@@ -9,8 +9,8 @@ TRAINING_DATA="../our_articles"
 TRAINING_OUTPUT_DIR="../our_training_data"
 
 PARSE_FILES=true
-EXTRACT_ELMO=true
-CREATE_CACHE=true
+EXTRACT_ELMO=false
+CREATE_CACHE=false
 EVALUATE_DATA=false
 PRETRAIN=false
 
@@ -21,19 +21,20 @@ fi
 
 if $PARSE_FILES; then
 	find $TRAINING_DATA -name "*txt" > filelist.txt
-	java -Xmx3g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse,dcoref,depparse -filelist filelist.txt -outputDirectory $TRAINING_OUTPUT_DIR
+	java -Xmx15g edu.stanford.nlp.pipeline.StanfordCoreNLP -annotators tokenize,ssplit,pos,lemma,ner,parse,dcoref,depparse -filelist filelist.txt -outputDirectory $TRAINING_OUTPUT_DIR
 fi
 
 if $EXTRACT_ELMO; then
 	chmod -R 777 $TRAINING_OUTPUT_DIR
 	python prep_elmo.py --input_glob "$TRAINING_OUTPUT_DIR/*.xml" --output_dir $TRAINING_OUTPUT_DIR
 	# Extract elmo embeddings over all files
-	./make_run_scripts.sh "$TRAINING_OUTPUT_DIR/*.elmo" 
-	chmod -R 777 ../run_scripts
-	for file in run_scripts/*.sh; do
-		echo $file
-		"$file"
-	done
+	./make_commands.sh "$TRAINING_OUTPUT_DIR/*.elmo" 
+	#chmod -R 777 ../run_scripts
+	parallel < commands.txt	
+	#for file in run_scripts/*.sh; do
+	#	echo $file
+	#	"$file"
+	#done
 fi
 
 if $CREATE_CACHE; then
