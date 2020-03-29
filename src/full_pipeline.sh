@@ -7,8 +7,9 @@ PRETRAINING_DATA="/mnt/data/NYT_data"
 
 TRAINING_DATA="../our_articles"
 TRAINING_OUTPUT_DIR="../our_training_data"
+MATCHED_EMBEDDING_CACHE="./matched_tupl.pickle"
 
-PARSE_FILES=true
+PARSE_FILES=false
 EXTRACT_ELMO=true
 CREATE_CACHE=false
 EVALUATE_DATA=false
@@ -30,7 +31,7 @@ if $EXTRACT_ELMO; then
 	# Extract elmo embeddings over all files
 	./make_commands.sh "$TRAINING_OUTPUT_DIR/*.elmo" 
 	#chmod -R 777 ../run_scripts
-	parallel < commands.txt	
+	parallel :::: commands.txt	
 	#for file in run_scripts/*.sh; do
 	#	echo $file
 	#	"$file"

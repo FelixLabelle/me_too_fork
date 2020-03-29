@@ -18,7 +18,7 @@ for f in ${IN_DIR}; do
 
   new_name=${f/.elmo/.hdf5}
   full_new_name=${new_name/raw_tokenized/embeddings}
-  echo "allennlp elmo $f $full_new_name --all" >> $run_script
+  echo "! ls $full_new_name && allennlp elmo $f $full_new_name --all" >> $run_script
 
 done
 echo Num items: ${#run_scripts[@]}
