@@ -3,3 +3,8 @@ src/__pycache__
 src/*.png
 src/run_scripts/*
 src/*.txt
+*.txt
+*.log
+our_training_data/*
+our_articles/*
+data_collection_clean/*
