@@ -13,51 +13,19 @@ CFParse = namedtuple("CFParse", "verb object subject")
 keywords = {"Government": [],
             "Protestors": []}
 
-def get_embeddings(f, verb_dict, nlp_id_to_sent, weights=[0,1,0]):
-    tupl_to_embeds = {}
-    idx_to_sent = {}
+class EmbeddingsLUT:
+    def __init__(self):
+        self.verb_to_embeddings = defaultdict(list)
+        self.decontextualized_embeddings = {}
 
-    try:
-        with h5py.File(f, 'r') as h5py_file:
-            sent_to_idx = ast.literal_eval(h5py_file.get("sentence_to_index")[0])
-            logger.info("Length of file {} is {} compared to {}".format(f,len(h5py_file),len(nlp_id_to_sent)))
-            assert(len(h5py_file) - 1 == len(nlp_id_to_sent)), str(len(h5py_file) - 1)
+    def __getitem__(self, word):
+        return self.embeddings[word]
 
-            for s in sent_to_idx:
-                idx = int(sent_to_idx[s])
-                idx_to_sent[idx] = s.split()
+    def _calculateAverage(self, word):
+        return np.mean(self.__getitem__(word), axis=0)
 
-            for _,tupl in verb_dict.items():
-                # assert what we can, some sentences are missing cause the keys in sentence_to_index are not unique
-                # we're just going to ignore the missing ones for now and hope they don't matter to much
-                # We care more about ones with entities. If we're just doing this to get verb scores it's
-                # not a big deal if we skip a bunch
-                if not tupl.sent_id in idx_to_sent:
-                    sent = nlp_id_to_sent[tupl.sent_id]
-                    idx = int(sent_to_idx[sent])
-                    tupl = tupl._replace(sent_id=idx)
-                else:
-                    idx = tupl.sent_id
-
-                if tupl.verb.lower() != idx_to_sent[idx][tupl.verb_id]:
-                    print("Mismatch", tupl.verb, str(idx_to_sent[idx][tupl.verb_id]), tupl.entity_name, f)
-                    continue
-
-                s1 = h5py_file.get(str(idx))
-                tupl_to_embeds[tupl] = (s1[0][tupl.verb_id] * weights[0] +
-                                        s1[1][tupl.verb_id] * weights[1] +
-                                        s1[2][tupl.verb_id] * weights[2])
-    except UnicodeEncodeError:
-        logger.error("Unicode error, probably on mismatch")
-    except OSError:
-        logger.error("OSError", f)
-    except KeyError:
-        logger.error("KeyError", f)
-    except Exception as e:
-        logger.error("An unexpected error {} occured for file {}".format(e,f))
-
-    return tupl_to_embeds, idx_to_sent
-
+    def decontextualize(self):
+        self.decontextualized_embeddings = {word : self._calculateAverage(word) for word in self.verb_to_embeddings}
 
 def getArticleList(dir_path, split_str="[_\.]"):
     article_list = []
@@ -96,15 +64,24 @@ articles = getArticleList(article_path)
 import pdb;pdb.set_trace()
 h5_file = os.path.join(data_path, articleToName(articles[0],append_str = ".txt.xml.hdf5"))
 #cf = load_connotation_frames()
+
+# TODO: Repeat this for every article and store results in a dict
 with h5py.File(h5_file, 'r') as h5py_file:
     sent_to_idx = ast.literal_eval(h5py_file.get("sentence_to_index")[0])
     idx_to_sent = {int(idx):sent for sent, idx in sent_to_idx.items()}
     sentences = [''] * len(idx_to_sent)
     # This loop imitates the extract_entities and get_embeddings function in "match_parse.py"  
     for idx, sent in idx_to_sent.items():
-        sentences[idx] = nlp(sent)
-        # NLP.py spacy?
-        cf_parse = sentenceToCFParse(sentences[idx])
+        parsed_sentence = nlp(sent)
+        # TODO: Filter sentences based on word content
+        # Below is a dummy example.E.G. (Storing sentenes in a fixed length array may not be ideal)
+        if filterFunction(parsed_sentence):
+            sentences[idx] = parsed_sentence
+        else:
+            continue
+        # TODO: Extract the verbs in each sentence. Anjalie's code does a parse bassed on entities, but then does a second pass
+        # over the entire corpus to capture any missing verbs. Write this in the cf_parse function
+        cf_parse = sentenceToCFParse(parsed_sentence)
         # CF parse replaces the following code
         '''
                 sentence = root.find('document').find('sentences')[sent_id]
@@ -128,16 +105,8 @@ with h5py.File(h5_file, 'r') as h5py_file:
                 name_to_verbs[name] += verbs_to_cache
 
         '''
-        # With the verbs extracted for a specific sentence, we get their embeddings
+        # We will also need to keep track of all the verbs present
         '''
-                s1 = h5py_file.get(str(idx))
-                tupl_to_embeds[tupl] = (s1[0][tupl.verb_id] * weights[0] +
-                                        s1[1][tupl.verb_id] * weights[1] +
-                                        s1[2][tupl.verb_id] * weights[2])
-        '''
-
-    # We will also need to keep track of all the verbs present
-    '''
         # Also keep all verbs that are in lex
         for s in root.find('document').find('sentences').iter('sentence'):
             sent = []
@@ -153,15 +122,24 @@ with h5py.File(h5_file, 'r') as h5py_file:
                     final_verb_dict[key] = VerbInstance(sent_id, verb_id, tok.find("word").text, tok.find('lemma').text.lower(), "", "", "", filename)
             id_to_sent[sent_id] = " ".join(sent)
  
-    '''
-    # Filter down these sentences
-    logger.info("Length of file {} is {} compared to {}".format(f,len(h5py_file),len(nlp_id_to_sent)))
+        '''
 
-# filter them for references to keywords
-# TODO: Consider adding coref resolution + ebedding filters (to remove references to other govs..)
-# Calculate the scores for these sentences using the connotation frames
-# Create training data for each conflict for each source
-# Train LR
+        # TODO: Store the word embeddings for these verbs.  
+        # With the verbs extracted for a specific sentence, we get their embeddings using
+        '''
+                s1 = h5py_file.get(str(idx))
+                tupl_to_embeds[tupl] = (s1[0][tupl.verb_id] * weights[0] +
+                                        s1[1][tupl.verb_id] * weights[1] +
+                                        s1[2][tupl.verb_id] * weights[2])
+        '''
+        # This is currently done by the get_token_representation in Line 391, representations.py
+        # We don't need most of this code, take a look at the EmbeddingsLUT class
+
+# TODO: Logistic regression
+# Logistic regression to predict the output using the decontextualized word embeddings
+
+
+# TODO: Visualize and interpret results
 # Apply using word embeddings to rest of dataset
 # Store entities and score for different combos
 # Make pretty graphs
