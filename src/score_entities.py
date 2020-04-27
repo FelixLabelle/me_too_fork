@@ -3,11 +3,11 @@ import re
 from collections import namedtuple, defaultdict
 from lexicons import load_connotation_frames, load_power_verbs, load_hannah_split
 from xml_helpers import process_xml_text
-from weighted_tests import run_connotation_frames
+from weighted_tests import logistic_regression
 import h5py
 import ast
 from tqdm import tqdm
-
+import numpy as np
 
 # Custom types to handle embeddings and articles
 # TODO: Decide what information we really need. Putting
@@ -16,18 +16,14 @@ from tqdm import tqdm
 # NOTE: Assumes that the article_idx are unique over
 # a corpus.. Check this is a valid assumption
 Article = namedtuple("Article", "riot src article_id")
-EmbeddingTuple = namedtuple("Embedding", "article sent_idx verb_idx word word_embedding")
+EmbeddingTuple = namedtuple("Embedding", "article sent_idx verb_idx word embedding")
+CONNO_DIR="../frames/annotated_connotation_frames/"
 
 def articleToName(article, append_str = ""):
     """ Helper function that converts the 
     article tuple into a str (e.g. filename)"""
     return "_".join(article) + append_str
 
-
-# TODO: Add in words for keyword filtering
-# Consider making this dictionary specific to each conflict to improve performance
-keywords = {"Government": [],
-            "Protestors": []}
 
 # TODO: Implement a filter. Start by using the keywords defined above
 def filterSentence(sentence):
@@ -42,20 +38,22 @@ class EmbeddingManager:
         self.word_to_tuple = defaultdict(list)
         self.article_to_tuple = {}
 
-    def __getitem__(self, ref_tupl):
-        return self.tupl_to_embeddings[ref_tupl]
-    
+    def __getitem__(self, item):
+        if type(item) == str:
+            return [self.tuples[idx] for idx in self.word_to_tuple.get(item, [])]
+        elif type(item) == Article:
+            return self.tuples[self.article_to_tuple[item]]
+        else:
+            raise "Invalid data type"
+
     def addItem(self, tupl):
         self.tuples.append(tupl)
         self.word_to_tuple[tupl.word] += [len(self.tuples) - 1]
         self.article_to_tuple[tupl.article] = len(self.tuples) - 1
 
-    def _calculateAverage(self, word):
-        word_embs = np.stack([self.__getitem__(tupl) for tupl in self.word_to_tuple[word]])
+    def decontextualizeWord(self, word):
+        word_embs = np.stack([self.tuples[idx].embedding for idx in self.word_to_tuple[word]])
         return np.mean(word_embs, axis=0)
-
-    def decontextualize(self):
-        return {word : self._calculateAverage(word) for word in self.verb_to_embeddings}
 
 def getArticleList(dir_path, split_str="[_\.]"):
     """ Function that loads all the files in a directory,
@@ -95,13 +93,13 @@ data_path = os.path.join(root_path, "..", "our_training_data")
 # load articles
 articles = getArticleList(article_path)
 
-# Initializes a dictionary that lets us go from (doc, sent_id) -> sentence
+# Initializes a dictionary that lets us go from (article, sent_id) -> sentence
 sentences = {}
 
 training_embeddings = EmbeddingManager()
 list_invalid_articles = []
 
-for article in tqdm(articles):
+for article in tqdm(articles[:1000]):
     # This loop imitates the extract_entities and get_embeddings function in "match_parse.py"
     try:
         h5_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml.hdf5"))
@@ -152,39 +150,47 @@ for article in tqdm(articles):
                 # Ditto for the elmo.py script
                 def retrieveWordEmbedding(sent_embedding, verb_idx, weights = [0,1,0]):
                     return sent_embedding[0][verb_idx] * weights[0] + sent_embedding[1][verb_idx] * weights[1] + sent_embedding[2][verb_idx] * weights[2]
-
-                for word_idx, (word,word_POS) in enumerate(zip(sent_POS, sent_lemmas)):
-                    if word_POS == "VB":
+                
+                for word_idx, (word,word_POS) in enumerate(zip(sent_lemmas, sent_POS)):
+                    if word_POS.startswith("VB"):
                         verb_embedding = EmbeddingTuple(article,sent_idx, word_idx, word, retrieveWordEmbedding(sent_embeddings, word_idx))
                         training_embeddings.addItem(verb_embedding)
     except OSError:
         list_invalid_articles.append(article)
         print("Invalid HDF5 file {}".format(articleToName(article)))
+    except Exception as e:
+        # Catch all for other errors 
+        list_invalid_articles.append(article)
+        print("{} occured. Skipping article {}".format(e, articleToName(article)))
 
-import pdb;pdb.set_trace()
+
+def buildDataset(lexicon, embeddings):
+    inputs = []
+    outputs = []
+    words = []
+    for word in lexicon:
+        if embeddings[word]:
+            inputs.append(embeddings.decontextualizeWord(word))
+            outputs.append(lexicon[word])
+            words.append(word)
+
+    return np.vstack(inputs), np.array(outputs), words
+
+#embeddings = [tpl.word_embedding for tpl in training_embeddings.tuples]
+HEADERS=["Perspective(wo)", "Perspective(ws)"]
+# Load split test_frames
+
+#import pdb;pdb.set_trace()
+for header in HEADERS:
+    cf_splits = load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
+    # TODO: Choose between type vs embedding prediction task
+    splits = [buildDataset(split,training_embeddings) for split in cf_splits]
+    # TODO: Add in class weight tuning
+    optimized_weights = None #{0: 1,1: 1,2: 1}
+    logistic_regression(splits[0][0], splits[0][1], splits[2][0], splits[2][1], weights=optimized_weights, do_print=True)
+        
+
 # NOTE: Is the paper_runs the comp Anjalie ran against the other papers?
-# Take the embeddings and average OVER the CF lex
-# Anjalie also keeps track of all the verbs present in the lexicon
-'''
-# Also keep all verbs that are in lex
-for s in root.find('document').find('sentences').iter('sentence'):
-    sent = []
-    for tok in s.find('tokens').iter('token'):
-        sent.append(tok.find("word").text.lower())
-        sent_id = int(s.get("id")) - 1
-        verb_id = int(tok.get("id")) - 1
-        key = (sent_id, verb_id)
-        if key in final_verb_dict:d
-            continue
-
-        if tok.find('POS').text.startswith("VB"):
-            final_verb_dict[key] = VerbInstance(sent_id, verb_id, tok.find("word").text, tok.find('lemma').text.lower(), "", "", "", filename)
-    id_to_sent[sent_id] = " ".join(sent)
-
-'''
-
-run_connotation_frames(embeddings, avg_embeddings)
-
 # TODO: Visualize and interpret results
 # Apply using word embeddings to rest of dataset
 # Store entities and score for different combos
