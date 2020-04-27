@@ -3,11 +3,12 @@ import re
 from collections import namedtuple, defaultdict
 from lexicons import load_connotation_frames, load_power_verbs, load_hannah_split
 from xml_helpers import process_xml_text
-from weighted_tests import logistic_regression
+from weighted_tests import logistic_regression, find_logistic_regression_weights
 import h5py
 import ast
 from tqdm import tqdm
 import numpy as np
+import pickle
 
 # Custom types to handle embeddings and articles
 # TODO: Decide what information we really need. Putting
@@ -45,6 +46,14 @@ class EmbeddingManager:
             return self.tuples[self.article_to_tuple[item]]
         else:
             raise "Invalid data type"
+    
+    def __setstate__(self, state):
+        self.tuples = state[0]
+        self.word_to_tuple = state[1]
+        self.article_to_tuple = state[2]
+
+    def __getstate__(self):
+        return (self.tuples, self.word_to_tuple, self.article_to_tuple)
 
     def addItem(self, tupl):
         self.tuples.append(tupl)
@@ -87,6 +96,19 @@ def extractItem(head, find_nodes, iter_node = None):
 
     return data
 
+def buildDataset(lexicon, embeddings):
+    inputs = []
+    outputs = []
+    words = []
+    for word in lexicon:
+        if embeddings[word]:
+            inputs.append(embeddings.decontextualizeWord(word))
+            outputs.append(lexicon[word])
+            words.append(word)
+
+    return np.vstack(inputs), np.array(outputs), words
+
+
 root_path = os.getcwd()
 article_path = os.path.join(root_path, "..", "our_articles")
 data_path = os.path.join(root_path, "..", "our_training_data")
@@ -99,7 +121,7 @@ sentences = {}
 training_embeddings = EmbeddingManager()
 list_invalid_articles = []
 
-for article in tqdm(articles[:1000]):
+for article in tqdm(articles[:100]):
     # This loop imitates the extract_entities and get_embeddings function in "match_parse.py"
     try:
         h5_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml.hdf5"))
@@ -139,13 +161,6 @@ for article in tqdm(articles[:1000]):
                     # Check if there is a better way to index, we want to be easily able to remove types 
                     # of sentences (source, topic, etc..)
                     sentences[(article, sent_idx)] = sent_lemmas
-
-                # TODO: Extract all the verbs in the sentence. Store the article, sent id, word, and embedding
-                # Anjalie's code does a parse bassed on entities, but then does a second pass
-                # over the entire corpus to capture any missing verbs. Write this in the cf_parse function 
-                # NOTE: We don't need the entities just yet. We can recover those from the filtered sentences
-                # NOTE: Work over the parsed_sentence, not just the filtered ones.
-                
                 # TODO: Look into Anjalie's paper and see if she discusses the weights
                 # Ditto for the elmo.py script
                 def retrieveWordEmbedding(sent_embedding, verb_idx, weights = [0,1,0]):
@@ -164,31 +179,40 @@ for article in tqdm(articles[:1000]):
         print("{} occured. Skipping article {}".format(e, articleToName(article)))
 
 
-def buildDataset(lexicon, embeddings):
-    inputs = []
-    outputs = []
-    words = []
-    for word in lexicon:
-        if embeddings[word]:
-            inputs.append(embeddings.decontextualizeWord(word))
-            outputs.append(lexicon[word])
-            words.append(word)
 
-    return np.vstack(inputs), np.array(outputs), words
 
 #embeddings = [tpl.word_embedding for tpl in training_embeddings.tuples]
 HEADERS=["Perspective(wo)", "Perspective(ws)"]
 # Load split test_frames
 
 #import pdb;pdb.set_trace()
+# TODO: Store the trained models and embeddings for future reference
+
+with open("embedding.pkl", 'wb+') as embedding_fh:
+    pickle.dump(training_embeddings, embedding_fh)
+
+models = {}
 for header in HEADERS:
+    TRAIN = 0
+    DEV = 1
+    TEST = 2
+    X = 0
+    Y = 1
     cf_splits = load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
     # TODO: Choose between type vs embedding prediction task
     splits = [buildDataset(split,training_embeddings) for split in cf_splits]
     # TODO: Add in class weight tuning
-    optimized_weights = None #{0: 1,1: 1,2: 1}
-    logistic_regression(splits[0][0], splits[0][1], splits[2][0], splits[2][1], weights=optimized_weights, do_print=True)
-        
+    optimized_weights = None 
+    '''
+    find_logistic_regression_weights(
+            splits[TRAIN][X], splits[TRAIN][Y],
+            splits[DEV][X], splits[DEV][Y])
+    '''
+    clf = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
+    models[header] = clf
+
+with open('models.pkl', 'wb+') as models_fh:
+    pickle.dump(models, model_fh)
 
 # NOTE: Is the paper_runs the comp Anjalie ran against the other papers?
 # TODO: Visualize and interpret results
