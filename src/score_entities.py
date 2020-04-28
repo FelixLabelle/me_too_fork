@@ -121,7 +121,7 @@ sentences = {}
 training_embeddings = EmbeddingManager()
 list_invalid_articles = []
 
-for article in tqdm(articles[:100]):
+for article in tqdm(articles[:10]):
     # This loop imitates the extract_entities and get_embeddings function in "match_parse.py"
     try:
         h5_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml.hdf5"))
@@ -161,8 +161,7 @@ for article in tqdm(articles[:100]):
                     # Check if there is a better way to index, we want to be easily able to remove types 
                     # of sentences (source, topic, etc..)
                     sentences[(article, sent_idx)] = sent_lemmas
-                # TODO: Look into Anjalie's paper and see if she discusses the weights
-                # Ditto for the elmo.py script
+                # NOTE: Weights refer to the accumulated layers of the 0) Inputs 1) Left context 2) Right context
                 def retrieveWordEmbedding(sent_embedding, verb_idx, weights = [0,1,0]):
                     return sent_embedding[0][verb_idx] * weights[0] + sent_embedding[1][verb_idx] * weights[1] + sent_embedding[2][verb_idx] * weights[2]
                 
@@ -178,16 +177,9 @@ for article in tqdm(articles[:100]):
         list_invalid_articles.append(article)
         print("{} occured. Skipping article {}".format(e, articleToName(article)))
 
-
-
-
-#embeddings = [tpl.word_embedding for tpl in training_embeddings.tuples]
 HEADERS=["Perspective(wo)", "Perspective(ws)"]
-# Load split test_frames
 
-#import pdb;pdb.set_trace()
 # TODO: Store the trained models and embeddings for future reference
-
 with open("embedding.pkl", 'wb+') as embedding_fh:
     pickle.dump(training_embeddings, embedding_fh)
 
@@ -198,21 +190,20 @@ for header in HEADERS:
     TEST = 2
     X = 0
     Y = 1
+    WORDS = 2
     cf_splits = load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
     # TODO: Choose between type vs embedding prediction task
     splits = [buildDataset(split,training_embeddings) for split in cf_splits]
-    # TODO: Add in class weight tuning
-    optimized_weights = None 
-    '''
-    find_logistic_regression_weights(
+    print("Starting to tune {} model".format(header))
+    dev_score, optimized_weights = find_logistic_regression_weights(
             splits[TRAIN][X], splits[TRAIN][Y],
-            splits[DEV][X], splits[DEV][Y])
-    '''
+            splits[DEV][X], splits[DEV][Y],
+            verbose=False)
     clf = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
     models[header] = clf
 
 with open('models.pkl', 'wb+') as models_fh:
-    pickle.dump(models, model_fh)
+    pickle.dump(models, models_fh)
 
 # NOTE: Is the paper_runs the comp Anjalie ran against the other papers?
 # TODO: Visualize and interpret results
