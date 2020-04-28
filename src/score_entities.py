@@ -38,6 +38,12 @@ class EmbeddingManager:
         self.tuples = []
         self.word_to_tuple = defaultdict(list)
         self.article_to_tuple = {}
+   
+    def fetchArticle(self, search_criterion):
+        """ Returns tuples using a search tuple of the same type, with wildcard fields marked as None or '' """
+        def match(t1, search_tupl):
+            return all([not search_term or term == search_term for term,search_term in zip(t1,search_tupl)])
+        return [tupl for tupl in self.tuples if match(tupl.article, search_criterion)]
 
     def __getitem__(self, item):
         if type(item) == str:
@@ -191,6 +197,7 @@ for header in HEADERS:
     X = 0
     Y = 1
     WORDS = 2
+
     cf_splits = load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
     # TODO: Choose between type vs embedding prediction task
     splits = [buildDataset(split,training_embeddings) for split in cf_splits]
@@ -199,8 +206,10 @@ for header in HEADERS:
             splits[TRAIN][X], splits[TRAIN][Y],
             splits[DEV][X], splits[DEV][Y],
             verbose=False)
-    clf = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
-    models[header] = clf
+    clf, test_score = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
+    models[header] = {'model': clf,
+                      'test_score' : test_score,
+                      'dev_score': dev_score}
 
 with open('models.pkl', 'wb+') as models_fh:
     pickle.dump(models, models_fh)
