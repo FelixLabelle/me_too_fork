@@ -128,8 +128,10 @@ def getArticleList(dir_path, split_str="[_\.]"):
     split_regex = re.compile(split_str)
     
     for file_name in os.listdir(dir_path):
+        if not file_name.endswith('hdf5'):
+            continue
         split_str = split_regex.split(file_name)
-        if len(split_str) != 4:
+        if len(split_str) < 4:
             print("The name contains {} splits".format(len(split_str)))
             continue
         current_article = tuple(split_str[:3])
@@ -272,7 +274,6 @@ def predictions(model, embs):
         return []
 
 root_path = os.getcwd()
-article_path = os.path.join(root_path, "..", "our_articles")
 data_path = os.path.join(root_path, "..", "our_training_data")
 # load articles
 
@@ -417,7 +418,7 @@ if __name__ == "__main__":
     parser.add_argument('--model_file', type=str, default="model.pkl")
     args = parser.parse_args()
 
-    articles = getArticleList(article_path)
+    articles = getArticleList(data_path)
 
     if args.mode == 'extract':
         extractEmbeddings(articles)
