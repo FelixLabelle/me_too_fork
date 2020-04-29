@@ -11,6 +11,7 @@ import numpy as np
 import pickle
 import stanza
 import xml.etree.ElementTree as ET
+import argparse
 
 # Custom types to handle embeddings and articles
 # TODO: Decide what information we really need. Putting
@@ -73,7 +74,21 @@ def articleToName(article, append_str = ""):
     article tuple into a str (e.g. filename)"""
     return "_".join(article) + append_str
 
-# TODO: Complete the code and test
+# TODO: Refactor these functions...
+def loadSentimentType(header):
+    def loadSentiment():
+        return load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
+    return loadSentiment
+
+def loadPower():
+    return load_power_split(POWER_AGENCY_DIR)
+
+def loadAgency():
+    return load_agency_split(POWER_AGENCY_DIR)
+
+# TODO: Rename me plz :(
+OPERATIONS=[("Perspective(wo)", loadSentimentType("Perspective(wo)")), ("Perspective(ws)", loadSentimentType("Perspective(ws)")), ("Power", loadPower), ("Agency", loadAgency)]
+
 # Class that houses embeddings and manage operations over them 
 class EmbeddingManager:
     def __init__(self):
@@ -249,150 +264,171 @@ def buildDataset(lexicon, embeddings):
 
     return np.vstack(inputs), np.array(outputs), words
 
+def predictions(model, embs):
+    ''' Adjusts preds to tenarized (3 discrete values) values '''
+    if embs:
+        return [pred - 1 for pred in model.predict(embs)]
+    else:
+        return []
 
 root_path = os.getcwd()
 article_path = os.path.join(root_path, "..", "our_articles")
 data_path = os.path.join(root_path, "..", "our_training_data")
 # load articles
-articles = getArticleList(article_path)
 
-# Initializes a dictionary that lets us go from (article, sent_id) -> sentence
-sentences = {}
+def extractEmbeddings(articles):
+    # Initializes a dictionary that lets us go from (article, sent_id) -> sentence
+    sentences = {}
 
-training_embeddings = EmbeddingManager()
-list_invalid_articles = []
-example_number = 0
+    training_embeddings = EmbeddingManager()
+    list_invalid_articles = []
+    example_number = 0
 
-for article in tqdm(articles[:50]):
-    # This loop imitates the extract_entities and get_embeddings function in "match_parse.py"
-    try:
-        h5_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml.hdf5"))
-        xml_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml"))
-    except OSError:
-        print("Unable to read file {}".format(articleToName(article)))
-        list_invalid_articles.append(article)
-        continue
+    for article in tqdm(articles):
+        try:
+            h5_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml.hdf5"))
+            xml_path = os.path.join(data_path, articleToName(article,append_str = ".txt.xml"))
+        except OSError:
+            print("Unable to read file {}".format(articleToName(article)))
+            list_invalid_articles.append(article)
+            continue
 
-    root, document = process_xml_text(xml_path, correct_idx=False, stem=False, lower=True)
-    sentence_nodes = [sent_node for sent_node in extractItem(root, ['document', 'sentences'], 'sentence')]
-    try:
-        with h5py.File(h5_path, 'r') as h5py_file:
-            sent_to_idx = ast.literal_eval(h5py_file.get("sentence_to_index")[0])
-            idx_to_sent = {int(idx):sent for sent, idx in sent_to_idx.items()}
-            # TODO: Replace with logging
-            if len(sentence_nodes) != len(idx_to_sent):
-                print("Mismatch in number of sentences, {} vs {} for article {}. Skipping article".format(len(document), len(idx_to_sent), article))
-                list_invalid_articles.append(article)
-                continue
-
-            # Get coreference for the doc and parse it in a format that we can work with.
-            doc_coreference_dict = None
-            if USE_COREF:
-                doc_coreference = [coreference for coreference in extractItem(root, ['document', 'coreference', 'coreference'], 'coreference')]
-                doc_coreference_dict = build_coreference_dict(doc_coreference)
-
-            
-            for sent_idx in idx_to_sent:
-                sent_tokens = [tok for tok in  extractItem(sentence_nodes[sent_idx] , ['tokens'], 'token')]
-                sent_words = [extractItem(tok, ['word']).text.lower() for tok in sent_tokens]
-                sent_POS = [extractItem(tok, ['POS']).text for tok in sent_tokens]
-                sent_lemmas = [extractItem(tok, ['lemma']).text.lower() for tok in sent_tokens]
-                sent_embeddings = h5py_file.get(str(sent_idx))
-                sent_dependencies = [dep for dep in extractItem(sentence_nodes[sent_idx], ['dependencies'], 'dep')] 
-
-                if sent_embeddings.shape[1] != len(sent_lemmas):
-                    print("Mismatch in number of token in sentence {} : {} vs {}. Skipping sentence".format(sent_idx, sent_embeddings.shape[1], len(sent_lemmas)))
+        root, document = process_xml_text(xml_path, correct_idx=False, stem=False, lower=True)
+        sentence_nodes = [sent_node for sent_node in extractItem(root, ['document', 'sentences'], 'sentence')]
+        try:
+            with h5py.File(h5_path, 'r') as h5py_file:
+                sent_to_idx = ast.literal_eval(h5py_file.get("sentence_to_index")[0])
+                idx_to_sent = {int(idx):sent for sent, idx in sent_to_idx.items()}
+                # TODO: Replace with logging
+                if len(sentence_nodes) != len(idx_to_sent):
+                    print("Mismatch in number of sentences, {} vs {} for article {}. Skipping article".format(len(document), len(idx_to_sent), article))
+                    list_invalid_articles.append(article)
                     continue
 
-                # Filter sentences based on word content
-                # These are to be used in the evaluation portion
-                examples = filterSentence(article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict)
-                example_number += len(examples)
+                # Get coreference for the doc and parse it in a format that we can work with.
+                doc_coreference_dict = None
+                if USE_COREF:
+                    doc_coreference = [coreference for coreference in extractItem(root, ['document', 'coreference', 'coreference'], 'coreference')]
+                    doc_coreference_dict = build_coreference_dict(doc_coreference)
+
                 
-                # NOTE: Weights refer to the accumulated layers of the 0) Inputs 1) Left context 2) Right context
-                def retrieveWordEmbedding(sent_embedding, verb_idx, weights = [0,1,0]):
-                    return sent_embedding[0][verb_idx] * weights[0] + sent_embedding[1][verb_idx] * weights[1] + sent_embedding[2][verb_idx] * weights[2]
-                
-                for example in examples:
-                    # TODO: Keep track of the other fields of example in particular: - ENTITYGROUP (whether the obj/subj was prot/gov)
-                    #                                                                - DEPTYPE --> needed to establish which model we use
-                    example['embedding'] =retrieveWordEmbedding(sent_embeddings, example['verb_idx']) 
-                    training_embeddings.addItem(example)
-    except OSError:
-        list_invalid_articles.append(article)
-        print("Invalid HDF5 file {}".format(articleToName(article)))
-    except Exception as e:
-        # Catch all for other errors 
-        list_invalid_articles.append(article)
-        print("{} occured. Skipping article {}".format(e, articleToName(article)))
-print("Total number of examples processed:", example_number)
+                for sent_idx in idx_to_sent:
+                    sent_tokens = [tok for tok in  extractItem(sentence_nodes[sent_idx] , ['tokens'], 'token')]
+                    sent_words = [extractItem(tok, ['word']).text.lower() for tok in sent_tokens]
+                    sent_POS = [extractItem(tok, ['POS']).text for tok in sent_tokens]
+                    sent_lemmas = [extractItem(tok, ['lemma']).text.lower() for tok in sent_tokens]
+                    sent_embeddings = h5py_file.get(str(sent_idx))
+                    sent_dependencies = [dep for dep in extractItem(sentence_nodes[sent_idx], ['dependencies'], 'dep')] 
 
-# TODO: Refactor these functions...
-def loadSentimentType(header):
-    def loadSentiment():
-        return load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
-    return loadSentiment
+                    if sent_embeddings.shape[1] != len(sent_lemmas):
+                        print("Mismatch in number of token in sentence {} : {} vs {}. Skipping sentence".format(sent_idx, sent_embeddings.shape[1], len(sent_lemmas)))
+                        continue
 
-def loadPower():
-    return load_power_split(POWER_AGENCY_DIR)
+                    # Filter sentences based on word content
+                    # These are to be used in the evaluation portion
+                    examples = filterSentence(article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict)
+                    example_number += len(examples)
+                    
+                    # NOTE: Weights refer to the accumulated layers of the 0) Inputs 1) Left context 2) Right context
+                    def retrieveWordEmbedding(sent_embedding, verb_idx, weights = [0,1,0]):
+                        return sent_embedding[0][verb_idx] * weights[0] + sent_embedding[1][verb_idx] * weights[1] + sent_embedding[2][verb_idx] * weights[2]
+                    
+                    for example in examples:
+                        # TODO: Keep track of the other fields of example in particular: - ENTITYGROUP (whether the obj/subj was prot/gov)
+                        #                                                                - DEPTYPE --> needed to establish which model we use
+                        example['embedding'] =retrieveWordEmbedding(sent_embeddings, example['verb_idx']) 
+                        training_embeddings.addItem(example)
+        except OSError:
+            list_invalid_articles.append(article)
+            print("Invalid HDF5 file {}".format(articleToName(article)))
+        except Exception as e:
+            # Catch all for other errors 
+            list_invalid_articles.append(article)
+            print("{} occured. Skipping article {}".format(e, articleToName(article)))
+    print("Total number of examples processed:", example_number)
 
-def loadAgency():
-    return load_agency_split(POWER_AGENCY_DIR)
+    # TODO: Store the trained models and embeddings for future reference
+    with open("embedding.pkl", 'wb+') as embedding_fh:
+        pickle.dump(training_embeddings, embedding_fh)
 
-# TODO: Rename me plz :(
-OPERATIONS=[("Perspective(wo)", loadSentimentType("Perspective(wo)")), ("Perspective(ws)", loadSentimentType("Perspective(ws)")), ("Power", loadPower), ("Agency", loadAgency)]
+def trainModels(articles, training_embeddings):
+    models = {}
+    for operation, load_function in OPERATIONS:
+        TRAIN = 0
+        DEV = 1
+        TEST = 2
+        X = 0
+        Y = 1
+        WORDS = 2
 
-# TODO: Store the trained models and embeddings for future reference
-with open("embedding.pkl", 'wb+') as embedding_fh:
-    pickle.dump(training_embeddings, embedding_fh)
-models = {}
-for operation, load_function in OPERATIONS:
-    TRAIN = 0
-    DEV = 1
-    TEST = 2
-    X = 0
-    Y = 1
-    WORDS = 2
+        cf_splits = load_function()
+        # TODO: Choose between type vs embedding prediction task
+        splits = [buildDataset(split,training_embeddings) for split in cf_splits]
+        print("Starting to tune {} model".format(operation))
+        dev_score, optimized_weights = find_logistic_regression_weights(
+                splits[TRAIN][X], splits[TRAIN][Y],
+                splits[DEV][X], splits[DEV][Y],
+                verbose=False)
+        clf, test_score = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
+        models[operation] = {'model': clf,
+                          'test_score' : test_score,
+                          'dev_score': dev_score,
+                          'weights': optimized_weights}
 
-    cf_splits = load_function()
-    # TODO: Choose between type vs embedding prediction task
-    splits = [buildDataset(split,training_embeddings) for split in cf_splits]
-    print("Starting to tune {} model".format(operation))
-    dev_score, optimized_weights = find_logistic_regression_weights(
-            splits[TRAIN][X], splits[TRAIN][Y],
-            splits[DEV][X], splits[DEV][Y],
-            verbose=False)
-    clf, test_score = logistic_regression(splits[TRAIN][X], splits[TRAIN][Y], splits[TEST][X], splits[TEST][Y], weights=optimized_weights, do_print=True, return_clf = True)
-    models[operation] = {'model': clf,
-                      'test_score' : test_score,
-                      'dev_score': dev_score,
-                      'weights': optimized_weights}
+    with open('tst_models.pkl', 'wb+') as models_fh:
+        pickle.dump(models, models_fh)
 
-with open('tst_models.pkl', 'wb+') as models_fh:
-    pickle.dump(models, models_fh)
 
-# TODO: Visualize and interpret results
-###### Per riot and source entity scores ######
-entity_scores = defaultdict(dict)
+def evaluateModels(articles, training_embeddings, models):
+    entity_scores = {}
+    riots, sources, _  = zip(*articles)
+    riots = set(riots)
+    sources = set(sources)
 
-riots, sources, _  = zip(*articles)
-riots = set(riots)
-sources = set(sources)
+    agent_sentiment_model = models[OPERATIONS[0][0]]['model']
+    patient_sentiment_model = models[OPERATIONS[1][0]]['model']
+    power_model = models[OPERATIONS[2][0]]['model']
+    agency_model = models[OPERATIONS[3][0]]['model']
 
-import pdb;pdb.set_trace()
-for riot in riots:
-    for source in sources:
-        verb_insts = training_embeddings.fetchArticles((riot, source, ""))
-        entities = [inst for inst in verb_insts if 'subject' in inst or 'object' in inst]
-        for gov_entity in government_kw:
-            # Evaluate the score for each model in models
-            # Average those scores
-            # Store them for this riot
-            if curr_entity:
-                scores = [[model.predict(emb) for emb in curr_entity] for model in models]
-                entity_scores[(riot, source)][gov_entity] = scores
-        for protestor_entity in protest_kw:
-            pass
-# Apply using word embeddings to rest of dataset
-# Store entities and score for different combos
-# Make pretty graphs
+    for riot in riots:
+        entity_scores[riot] = defaultdict(dict)
+        for source in sources:
+            verb_insts = training_embeddings.fetchArticles((riot, source, ""))
+            patient_instances = [inst for inst in verb_insts if 'patient' in inst]
+            agent_instances = [inst for inst in verb_insts if 'agent' in inst]
+            for current_entity in government_kw | protesters_kw:
+                agent_embs = [instance['embedding'] for instance in agent_instances if instance['agent']['entity_lemma'] == current_entity]
+                patient_embs = [instance['embedding'] for instance in patient_instances if instance['patient']['entity_lemma'] == current_entity]
+                if agent_embs or patient_embs:
+                    num_instances = len(agent_embs) + len(patient_embs)
+                    power = sum(predictions(power_model, agent_embs))- sum(predictions(power_model, agent_embs))
+                    agency = sum(predictions(agency_model, agent_embs))
+                    sentiment = sum(predictions(agent_sentiment_model, agent_embs)) + sum(predictions(patient_sentiment_model, patient_embs))
+                    entity_scores[riot][source][current_entity] = {'sentiment': sentiment,
+                                                                   'power': power,
+                                                                   'agency': agency,
+                                                                   'count': num_instances}
+    
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', type=str, choices=['extract', 'train', 'visualize'], required=True, default="visualize")
+    parser.add_argument('--emb_file', type=str, default="embedding.pkl")
+    parser.add_argument('--model_file', type=str, default="model.pkl")
+    args = parser.parse_args()
+
+    articles = getArticleList(article_path)
+
+    if args.mode == 'extract':
+        extractEmbeddings(articles)
+    elif args.mode == 'train': 
+        with open(args.emb_file, 'rb') as embed_fh:
+            training_embs = pickle.load(embed_fh)
+        
+        trainModels(training_embs)
+    elif args.mode == 'visualize':
+        with open(args.emb_file, 'rb') as embed_fh:
+            training_embs = pickle.load(embed_fh)
+        with open(args.model_file,'rb') as model_fh:
+            models = pickle.load(model_fh)
+        evaluate_models(articles, training_embs, models)
