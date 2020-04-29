@@ -23,7 +23,6 @@ import argparse
 #EmbeddingTuple = namedtuple("Embedding", "article sent_idx verb_idx word embedding")
 CONNO_DIR="../frames/annotated_connotation_frames/"
 POWER_AGENCY_DIR="../frames/agency_power.csv"
-USE_COREF = True
 
 government_kw = {
     'government', 'government forces', 'state', 'authority', 'authorities', 'regime',
@@ -153,7 +152,7 @@ def extractItem(head, find_nodes, iter_node = None):
 
     return data
 
-def filterSentence(article, sent_idx, dependencies, lemmas, pos, doc_coreference_dict=None):
+def filterSentence(args, article, sent_idx, dependencies, lemmas, pos, doc_coreference_dict=None):
     # Go over dependencies:
     # if active:                    |    if passive:
     #   if type == nsubj, nobj      |        if type == nsubpass, agent
@@ -203,6 +202,12 @@ def filterSentence(article, sent_idx, dependencies, lemmas, pos, doc_coreference
 
             verb_dependencies[(governor_idx, governor_lemma)].append(example)
 
+    # In case we missed verbs add them back to the verb_dependencies structure without any dependents.
+    if args.use_all_verbs:
+        for verb_idx, (verb_lemma, pos_tag) in enumerate(zip(lemmas, pos)):
+            if pos_tag.startswith("VB") and (verb_idx, verb_lemma) not in verb_dependencies:
+                verb_dependencies[(verb_idx, verb_lemma)] = []
+
     # Iterate over verbs in the sentences filter out wrong nmod examples build single verb dictionary.
     for governor_idx, governor_lemma in verb_dependencies:
         verb_example_dict = {
@@ -212,17 +217,18 @@ def filterSentence(article, sent_idx, dependencies, lemmas, pos, doc_coreference
             "verb_lemma": governor_lemma
         }
         dependencies = verb_dependencies[governor_idx, governor_lemma]
-        dep_type_set = {dependency['dep_type'] for dependency in dependencies}
-        for dependency in dependencies:
-            # agent
-            if dependency['dep_type'] in ["nsubj", "agent", "nmod"]:
-                # We keep example with type nmod only in passive sentences that have a nsubjpass for the verb.
-                if dependency['dep_type'] == "nmod" and not "nsubjpass" in dep_type_set:
-                    continue
-                verb_example_dict["agent"] = dependency
-            # patient
-            elif dependency['dep_type'] in ["nsubjpass", "dobj"]:
-                verb_example_dict["patient"] = dependency
+        if len(dependencies) > 0:
+            dep_type_set = {dependency['dep_type'] for dependency in dependencies}
+            for dependency in dependencies:
+                # agent
+                if dependency['dep_type'] in ["nsubj", "agent", "nmod"]:
+                    # We keep example with type nmod only in passive sentences that have a nsubjpass for the verb.
+                    if dependency['dep_type'] == "nmod" and not "nsubjpass" in dep_type_set:
+                        continue
+                    verb_example_dict["agent"] = dependency
+                # patient
+                elif dependency['dep_type'] in ["nsubjpass", "dobj"]:
+                    verb_example_dict["patient"] = dependency
         tuples.append(verb_example_dict)
     return tuples
 
@@ -277,7 +283,7 @@ root_path = os.getcwd()
 data_path = os.path.join(root_path, "..", "our_training_data")
 # load articles
 
-def extractEmbeddings(articles):
+def extractEmbeddings(args, articles):
     # Initializes a dictionary that lets us go from (article, sent_id) -> sentence
     sentences = {}
 
@@ -308,10 +314,9 @@ def extractEmbeddings(articles):
 
                 # Get coreference for the doc and parse it in a format that we can work with.
                 doc_coreference_dict = None
-                if USE_COREF:
+                if args.use_coref:
                     doc_coreference = [coreference for coreference in extractItem(root, ['document', 'coreference', 'coreference'], 'coreference')]
                     doc_coreference_dict = build_coreference_dict(doc_coreference)
-
                 
                 for sent_idx in idx_to_sent:
                     sent_tokens = [tok for tok in  extractItem(sentence_nodes[sent_idx] , ['tokens'], 'token')]
@@ -327,7 +332,7 @@ def extractEmbeddings(articles):
 
                     # Filter sentences based on word content
                     # These are to be used in the evaluation portion
-                    examples = filterSentence(article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict)
+                    examples = filterSentence(args, article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict)
                     example_number += len(examples)
                     
                     # NOTE: Weights refer to the accumulated layers of the 0) Inputs 1) Left context 2) Right context
@@ -349,10 +354,12 @@ def extractEmbeddings(articles):
     print("Total number of examples processed:", example_number)
 
     # TODO: Store the trained models and embeddings for future reference
-    with open("embedding.pkl", 'wb+') as embedding_fh:
+    with open(args.emb_file, 'wb+') as embedding_fh:
         pickle.dump(training_embeddings, embedding_fh)
 
-def trainModels(articles, training_embeddings):
+def trainModels(articles, args):
+    with open(args.emb_file, 'rb') as embed_fh:
+        training_embeddings = pickle.load(embed_fh)
     models = {}
     for operation, load_function in OPERATIONS:
         TRAIN = 0
@@ -376,11 +383,16 @@ def trainModels(articles, training_embeddings):
                           'dev_score': dev_score,
                           'weights': optimized_weights}
 
-    with open('tst_models.pkl', 'wb+') as models_fh:
+    with open(args.model_file, 'wb+') as models_fh:
         pickle.dump(models, models_fh)
 
 
-def evaluateModels(articles, training_embeddings, models):
+def evaluateModels(articles, args):
+    with open(args.emb_file, 'rb') as embed_fh:
+        training_embeddings = pickle.load(embed_fh)
+    with open(args.model_file,'rb') as model_fh:
+        models = pickle.load(model_fh)
+
     entity_scores = {}
     riots, sources, _  = zip(*articles)
     riots = set(riots)
@@ -405,31 +417,30 @@ def evaluateModels(articles, training_embeddings, models):
                     power = sum(predictions(power_model, agent_embs))- sum(predictions(power_model, agent_embs))
                     agency = sum(predictions(agency_model, agent_embs))
                     sentiment = sum(predictions(agent_sentiment_model, agent_embs)) + sum(predictions(patient_sentiment_model, patient_embs))
-                    entity_scores[riot][source][current_entity] = {'sentiment': sentiment,
-                                                                   'power': power,
-                                                                   'agency': agency,
-                                                                   'count': num_instances}
+                    entity_scores[riot][source][current_entity] = {'sentiment': int(sentiment),
+                                                                   'power': int(power),
+                                                                   'agency': int(agency),
+                                                                   'count': int(num_instances)}
     
+    import json
+    with open(args.results_file,'w+') as scores_fh:
+        json.dump(entity_scores, scores_fh)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', type=str, choices=['extract', 'train', 'visualize'], required=True, default="visualize")
+    parser.add_argument('--mode', type=str, choices=['extract', 'train', 'evaluate'], required=True, default="evaluate")
     parser.add_argument('--emb_file', type=str, default="embedding.pkl")
     parser.add_argument('--model_file', type=str, default="model.pkl")
+    parser.add_argument('--results_file', type=str, default="results.json")
+    parser.add_argument('--use_all_verbs', action='store_true')
+    parser.add_argument('--use_coref', action='store_true')
     args = parser.parse_args()
 
     articles = getArticleList(data_path)
 
     if args.mode == 'extract':
-        extractEmbeddings(articles)
+        extractEmbeddings(args, articles)
     elif args.mode == 'train': 
-        with open(args.emb_file, 'rb') as embed_fh:
-            training_embs = pickle.load(embed_fh)
-        
-        trainModels(training_embs)
-    elif args.mode == 'visualize':
-        with open(args.emb_file, 'rb') as embed_fh:
-            training_embs = pickle.load(embed_fh)
-        with open(args.model_file,'rb') as model_fh:
-            models = pickle.load(model_fh)
-        evaluate_models(articles, training_embs, models)
+        trainModels(articles, args)
+    elif args.mode == 'evaluate':
+        evaluateModels(articles, args) #training_embs, models)
