@@ -51,7 +51,11 @@ def find_logistic_regression_weights(train_X, train_Y, test_X, test_Y, verbose=T
         for w2 in weights2:
             # for reg in weights:
             class_weights = {0: w1, 1: w2, 2: 1.0-w1-w2}
-            score = logistic_regression(train_X, train_Y, test_X, test_Y, weights=class_weights, is_token=is_token, test_words_Y=test_words_Y)
+            try:
+                score = logistic_regression(train_X, train_Y, test_X, test_Y, weights=class_weights, is_token=is_token, test_words_Y=test_words_Y)
+            except TypeError:
+                print("Invalid weights {} passed".format(class_weights))
+                continue
             if verbose:
                 print("Macro F1", score, class_weights)
             score_to_weights[score] = class_weights
@@ -78,11 +82,11 @@ def pred_to_score(Y, preds, num_classes):
         w_to_label[w] = new_labels[idx]
     return w_to_label
 
-def logistic_regression(train_X, train_Y, test_X, test_Y, weights=None, do_print=False, is_token=False, test_words_Y=None, return_preds=False, reg = 1.0):
+def logistic_regression(train_X, train_Y, test_X, test_Y, weights=None, do_print=False, is_token=False, test_words_Y=None, return_preds=False, return_clf=False, reg = 1.0):
     # Logistic Regression
     if reg is not None:
         clf = LogisticRegression(random_state=0, solver='lbfgs',
-                                 multi_class='multinomial', class_weight=weights, C=reg, penalty='l2').fit(train_X, train_Y)
+                                 multi_class='multinomial', class_weight=weights, C=reg,max_iter=1000, penalty='l2').fit(train_X, train_Y)
     else:
         clf = LogisticRegression(random_state=0, solver='lbfgs',
                                  multi_class='multinomial', class_weight=weights).fit(train_X, train_Y)
@@ -107,6 +111,9 @@ def logistic_regression(train_X, train_Y, test_X, test_Y, weights=None, do_print
 
     if return_preds:
         return pred
+
+    if return_clf:
+        return clf, f1_score(test_Y, final_pred,  average='macro')
 
     return f1_score(test_Y, final_pred,  average='macro')
 
@@ -204,6 +211,7 @@ def main():
     # other parameters don't matter when we read from the cache
     embeddings = get_token_embeddings("", [], weights=[0,1,0], cache_name=args.cache)
     embeddings.normalize()
+    import pdb;pdb.set_trace()
     avg_embeddings = embeddings.make_average()
 
     if args.from_scratch:
