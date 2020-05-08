@@ -1,0 +1,3 @@
+[submodule "data_cleaner"]
+	path = data_cleaner
+	url = https://github.com/FelixLabelle/data_cleaner.git
