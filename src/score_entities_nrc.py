@@ -12,6 +12,8 @@ import pickle
 import stanza
 import xml.etree.ElementTree as ET
 import argparse
+import pandas
+import json
 
 # Custom types to handle embeddings and articles
 # TODO: Decide what information we really need. Putting
@@ -53,6 +55,10 @@ PRONOUNS = {"i", "me", "my", "mine", "myself",
           "we", "us", "our", "ours", "ourselves",
           "they", "them", "their", "theirs", "themselves"}
 
+entity_adjs = {'chinese', 'iraqi', 'venezuelan', 'iranian', 'french', 'european', 'american',
+    'british', 'indonesian', 'philippine', 'mexican', 'russian', 'australian', 'foreign', 'western',
+    'jewish', 'yellow', 'canadian', 'islamic', 'palestinian', 'kazakh', 'ukrainian', 'korean',
+    'japanese', 'israeli', 'arab', 'italian', 'albanian'}
 
 # Lemmatize the kew-words for government and protesters.
 nlp = stanza.Pipeline(lang='en', processors='tokenize,pos,lemma')
@@ -74,19 +80,32 @@ def articleToName(article, append_str = ""):
     return "_".join(article) + append_str
 
 # TODO: Refactor these functions...
-def loadSentimentType(header):
-    def loadSentiment():
-        return load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
-    return loadSentiment
-
+# def loadSentimentType(header):
+#     def loadSentiment():
+#         return load_hannah_split(CONNO_DIR, header, binarize=True, remove_neutral=False)
+#     return loadSentiment
+#
+# def loadPower():
+#     return load_power_split(POWER_AGENCY_DIR)
+#
+# def loadAgency():
+#     return load_agency_split(POWER_AGENCY_DIR)
 def loadPower():
-    return load_power_split(POWER_AGENCY_DIR)
+    return load_nrc_split(nrc_file, "Dominance", training_embs)
 
 def loadAgency():
-    return load_agency_split(POWER_AGENCY_DIR)
+    return load_nrc_split(nrc_file, "Arousal", training_embs)
+
+def loadSentiment():
+    return load_nrc_split(nrc_file, "Valence", training_embs)
+
+def load_nrc_vocab(filename):
+    df = pandas.read_csv(filename, sep="\t")
+    return set(df['Word'])
 
 # TODO: Rename me plz :(
-OPERATIONS=[("Perspective(wo)", loadSentimentType("Perspective(wo)")), ("Perspective(ws)", loadSentimentType("Perspective(ws)")), ("Power", loadPower), ("Agency", loadAgency)]
+#OPERATIONS=[("Perspective(wo)", loadSentimentType("Perspective(wo)")), ("Perspective(ws)", loadSentimentType("Perspective(ws)")), ("Power", loadPower), ("Agency", loadAgency)]
+OPERATIONS=[("Power", loadPower), ("Agency", loadAgency), ("Sentiment", loadSentiment)]
 
 # Class that houses embeddings and manage operations over them
 class EmbeddingManager:
@@ -115,9 +134,30 @@ class EmbeddingManager:
         self.word_to_tuple[tupl['tok_lemma']] += [len(self.tuples) - 1]
         self.article_to_tuple[tupl['article']] = len(self.tuples) - 1
 
+
     def decontextualizeWord(self, word):
         word_embs = np.stack([self.tuples[idx]['embedding'] for idx in self.word_to_tuple[word]])
         return np.mean(word_embs, axis=0)
+
+
+class SummedEmbeddings:
+    def __init__(self):
+        self.word_summed_embedding = {}
+        self.word_count = defaultdict(int)
+
+    def addItem(self, tupl):
+        if tupl['tok_lemma'] not in self.word_summed_embedding:
+            self.word_summed_embedding[tupl['tok_lemma']] = tupl['embedding']
+        else:
+            self.word_summed_embedding[tupl['tok_lemma']] += tupl['embedding']
+        self.word_count[tupl['tok_lemma']] += 1
+
+    def decontextualizeWord(self, word):
+        return self.word_summed_embedding[word] / self.word_count[word]
+
+def splitFileName(file_name, split_str="[_\.]"):
+    split_regex = re.compile(split_str)
+    return split_regex.split(file_name)
 
 def getArticleList(dir_path, split_str="[_\.]"):
     """ Function that loads all the files in a directory,
@@ -153,7 +193,7 @@ def extractItem(head, find_nodes, iter_node = None):
 
     return data
 
-def filterSentence(args, article, sent_idx, dependencies, lemmas, pos, doc_coreference_dict=None):
+def filterSentence(args, article, sent_idx, dependencies, lemmas, pos, doc_coreference_dict=None, nrc_vocab=None):
     # Go over dependencies:
     # if active:                    |    if passive:
     #   if type == nsubj, nobj      |        if type == nsubpass, agent
@@ -162,51 +202,53 @@ def filterSentence(args, article, sent_idx, dependencies, lemmas, pos, doc_coref
     #       pass a coref structure that associates if a pronoun is government/protest related
     tuples = []
     tok_dependencies = defaultdict(list)
-    # for dep in dependencies:
-    #     # Check if we are looking at a subject or an object:
-    #     if dep.get("type") in {"nsubj", "dobj", "nsubjpass", "agent", "nmod"}:
-    #         dependent = dep.find("dependent")
-    #         dependent_idx = int(dependent.get("idx")) - 1
-    #         dependent_lemma = lemmas[dependent_idx].lower()
-    #
-    #         governor = dep.find("governor") # verb
-    #         governor_idx = int(governor.get("idx")) - 1
-    #         governor_lemma = lemmas[governor_idx].lower()
-    #         governor_pos = pos[governor_idx]
-    #
-    #         # In case nmod was not pointing to a verb.
-    #         if not pos[governor_idx].startswith("VB"):
-    #             continue
-    #         # Representative is not None if this was a coreference.
-    #         representative = None
-    #         # Check if the dependent is in the government list or the protesters list:
-    #         entity_group = None
-    #         if dependent_lemma in protesters_kw:
-    #             entity_group = "protester"
-    #         elif dependent_lemma in government_kw:
-    #             entity_group = "government"
-    #         elif doc_coreference_dict is not None and (sent_idx, dependent_idx) in doc_coreference_dict:
-    #             entity_group, representative = doc_coreference_dict[(sent_idx, dependent_idx)]
-    #             # print("FOUND AN EXAMPLE")
-    #             # print("PRONOUN", sent_idx, dependent_idx)
-    #             # print(lemmas)
-    #             # print(entity_group)
-    #             # print(lemmas[dependent_idx])
-    #         example = {
-    #             "dep_type": dep.get("type"),
-    #             "entity_lemma": dependent_lemma,
-    #             "entity_idx": dependent_idx,
-    #             "entity_group": entity_group
-    #         }
-    #         if representative is not None:
-    #             example["representative"] = representative
-    #
-    #         verb_dependencies[(governor_idx, governor_lemma)].append(example)
+    if args.search_entities:
+        for dep in dependencies:
+            # Check if we are looking at a subject or an object:
+            if dep.get("type") in {"amod"}:
+                dependent = dep.find("dependent")
+                dependent_idx = int(dependent.get("idx")) - 1
+                dependent_lemma = lemmas[dependent_idx].lower()
+
+                governor = dep.find("governor") # verb
+                governor_idx = int(governor.get("idx")) - 1
+                governor_lemma = lemmas[governor_idx].lower()
+                governor_pos = pos[governor_idx]
+
+                # In case nmod was not pointing to a verb.
+                if (not pos[dependent_idx].startswith("JJ")) or (dependent_lemma in entity_adjs):
+                    continue
+                # Representative is not None if this was a coreference.
+                representative = None
+                # Check if the dependent is in the government list or the protesters list:
+                entity_group = None
+                if governor_lemma in protesters_kw:
+                    entity_group = "protester"
+                elif governor_lemma in government_kw:
+                    entity_group = "government"
+                elif doc_coreference_dict is not None and (sent_idx, governor_idx) in doc_coreference_dict:
+                    entity_group, representative = doc_coreference_dict[(sent_idx, dependent_idx)]
+                    # print("FOUND AN EXAMPLE")
+                    # print("PRONOUN", sent_idx, dependent_idx)
+                    # print(lemmas)
+                    # print(entity_group)
+                    # print(lemmas[dependent_idx])
+                if entity_group != None:
+                    example = {
+                        "dep_type": dep.get("type"),
+                        "entity_lemma": governor_lemma,
+                        "entity_idx": governor_idx,
+                        "entity_group": entity_group
+                    }
+                    if representative is not None:
+                        example["representative"] = representative
+
+                    tok_dependencies[(dependent_idx, dependent_lemma, pos[dependent_idx])].append(example)
 
     # In case we missed verbs add them back to the verb_dependencies structure without any dependents.
-    if args.use_all_pos:
+    if args.use_all_nrc:
         for idx, (lemma, pos_tag) in enumerate(zip(lemmas, pos)):
-            if (idx, lemma) not in tok_dependencies:
+            if (idx, lemma) not in tok_dependencies and lemma in nrc_vocab:
                 tok_dependencies[(idx, lemma, pos_tag)] = []
 
     # elif args.use_all_verbs:
@@ -222,22 +264,24 @@ def filterSentence(args, article, sent_idx, dependencies, lemmas, pos, doc_coref
             "sent_idx": sent_idx,
             "tok_idx": idx,
             "tok_lemma": lemma,
-            "tok_pos": pos
+            #"tok_pos": pos
         }
-        # dependencies = tok_dependencies[(governor_idx, governor_lemma)]
-        # if len(dependencies) > 0:
-        #     dep_type_set = {dependency['dep_type'] for dependency in dependencies}
-        #     for dependency in dependencies:
-        #         # agent
-        #         if dependency['dep_type'] in ["nsubj", "agent", "nmod"]:
-        #             # We keep example with type nmod only in passive sentences that have a nsubjpass for the verb.
-        #             if dependency['dep_type'] == "nmod" and not "nsubjpass" in dep_type_set:
-        #                 continue
-        #             tok_example_dict["agent"] = dependency
-        #         # patient
-        #         elif dependency['dep_type'] in ["nsubjpass", "dobj"]:
-        #             tok_example_dict["patient"] = dependency
+        dependencies = tok_dependencies[(idx, lemma, pos)]
+        if len(dependencies) > 0:
+            dep_type_set = {dependency['dep_type'] for dependency in dependencies}
+            for dependency in dependencies:
+                # # agent
+                # if dependency['dep_type'] in ["nsubj", "agent", "nmod"]:
+                #     # We keep example with type nmod only in passive sentences that have a nsubjpass for the verb.
+                #     if dependency['dep_type'] == "nmod" and not "nsubjpass" in dep_type_set:
+                #         continue
+                #     tok_example_dict["agent"] = dependency
+                # # patient
+                # elif dependency['dep_type'] in ["nsubjpass", "dobj"]:
+                #     tok_example_dict["patient"] = dependency
+                tok_example_dict["modified"] = dependency
         tuples.append(tok_example_dict)
+        #print(tok_example_dict)
     return tuples
 
 def build_coreference_dict(doc_coreference):
@@ -295,10 +339,14 @@ article_path = os.path.join(root_path, '..', "our_articles")
 def extractEmbeddings(args, articles):
     # Initializes a dictionary that lets us go from (article, sent_id) -> sentence
     sentences = {}
-
-    training_embeddings = EmbeddingManager()
+    if args.search_entities:
+        training_embeddings = EmbeddingManager()
+    else:
+        training_embeddings = SummedEmbeddings()
     list_invalid_articles = []
     example_number = 0
+
+    nrc_vocab = load_nrc_vocab(nrc_file)
 
     for article in tqdm(articles):
         try:
@@ -341,7 +389,7 @@ def extractEmbeddings(args, articles):
 
                     # Filter sentences based on word content
                     # These are to be used in the evaluation portion
-                    examples = filterSentence(args, article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict)
+                    examples = filterSentence(args, article, sent_idx, sent_dependencies, sent_lemmas, sent_POS, doc_coreference_dict, nrc_vocab)
                     example_number += len(examples)
 
                     # NOTE: Weights refer to the accumulated layers of the 0) Inputs 1) Left context 2) Right context
@@ -408,25 +456,32 @@ def evaluateModels(articles, args):
     riots = set(riots)
     sources = set(sources)
 
-    agent_sentiment_model = models[OPERATIONS[0][0]]['model']
-    patient_sentiment_model = models[OPERATIONS[1][0]]['model']
-    power_model = models[OPERATIONS[2][0]]['model']
-    agency_model = models[OPERATIONS[3][0]]['model']
+    #patient_sentiment_model = models[OPERATIONS[1][0]]['model']
+    power_model = models[OPERATIONS[0][0]]['model']
+    agency_model = models[OPERATIONS[1][0]]['model']
+    sentiment_model = models[OPERATIONS[2][0]]['model']
 
     for riot in riots:
         entity_scores[riot] = defaultdict(dict)
         for source in sources:
-            verb_insts = training_embeddings.fetchArticles((riot, source, ""))
-            patient_instances = [inst for inst in verb_insts if 'patient' in inst]
-            agent_instances = [inst for inst in verb_insts if 'agent' in inst]
+            # verb_insts = training_embeddings.fetchArticles((riot, source, ""))
+            # patient_instances = [inst for inst in verb_insts if 'patient' in inst]
+            # agent_instances = [inst for inst in verb_insts if 'agent' in inst]
+            adj_insts = training_embeddings.fetchArticles((riot, source, ""))
+            modified_instances = [inst for inst in adj_insts if 'modified' in inst]
             for current_entity in government_kw | protesters_kw:
-                agent_embs = [instance['embedding'] for instance in agent_instances if instance['agent']['entity_lemma'] == current_entity]
-                patient_embs = [instance['embedding'] for instance in patient_instances if instance['patient']['entity_lemma'] == current_entity]
-                if agent_embs or patient_embs:
-                    num_instances = len(agent_embs) + len(patient_embs)
-                    power = sum(predictions(power_model, agent_embs))- sum(predictions(power_model, patient_embs))
-                    agency = sum(predictions(agency_model, agent_embs))
-                    sentiment = sum(predictions(agent_sentiment_model, agent_embs)) + sum(predictions(patient_sentiment_model, patient_embs))
+                #agent_embs = [instance['embedding'] for instance in agent_instances if instance['agent']['entity_lemma'] == current_entity]
+                #patient_embs = [instance['embedding'] for instance in patient_instances if instance['patient']['entity_lemma'] == current_entity]
+                modified_embs = [instance['embedding'] for instance in modified_instances if instance['modified']['entity_lemma'] == current_entity]
+                if modified_embs: #agent_embs or patient_embs:
+                    # num_instances = len(agent_embs) + len(patient_embs)
+                    # power = sum(predictions(power_model, agent_embs))- sum(predictions(power_model, patient_embs))
+                    # agency = sum(predictions(agency_model, agent_embs))
+                    # sentiment = sum(predictions(agent_sentiment_model, agent_embs)) + sum(predictions(patient_sentiment_model, patient_embs))
+                    num_instances = len(modified_embs)
+                    power = sum(predictions(power_model, modified_embs))
+                    agency = sum(predictions(agency_model, modified_embs))
+                    sentiment = sum(predictions(sentiment_model, modified_embs))
                     entity_scores[riot][source][current_entity] = {'sentiment': int(sentiment),
                                                                    'power': int(power),
                                                                    'agency': int(agency),
@@ -460,18 +515,80 @@ def createExamples(articles, args, target_entity='government', sample_size = 10)
     with open('samples.json', 'w+') as samples_fh:
         json.dump(sampled_articles, samples_fh)
 
+def evaluateEntities(adj_insts, entities_of_interest, models):
+
+    power_model = models[OPERATIONS[0][0]]['model']
+    agency_model = models[OPERATIONS[1][0]]['model']
+    sentiment_model = models[OPERATIONS[2][0]]['model']
+
+
+    entity_scores = {}
+    modified_instances = [inst for inst in adj_insts if 'modified' in inst]
+
+    for current_entity in entities_of_interest:
+        modified_embs = [instance['embedding'] for instance in modified_instances if instance['modified']['entity_lemma'] == current_entity]
+        if modified_embs:
+                    num_instances = len(modified_embs)
+                    power = sum(predictions(power_model, modified_embs))
+                    agency = sum(predictions(agency_model, modified_embs))
+                    sentiment = sum(predictions(sentiment_model, modified_embs))
+                    entity_scores[current_entity] = {'sentiment': int(sentiment),
+                                                                   'power': int(power),
+                                                                   'agency': int(agency),
+                                                                   'count': int(num_instances)}
+    return entity_scores
+
+KEYS = ['sentiment', 'power', 'agency', 'count']
+def sumScores(entities):
+    entity_score = {key : 0 for key in KEYS}
+    for entity in entities:
+        for key in KEYS:
+            entity_score[key] += entity[key]
+    return entity_score
+
+def subjectiveEvaluation(articles, args):
+    # load samples file
+    with open('samples.json') as samples_fh:
+        samples = json.load(samples_fh)
+
+    with open(args.emb_file, 'rb') as embed_fh:
+        training_embeddings = pickle.load(embed_fh)
+
+    with open(args.model_file,'rb') as model_fh:
+        models = pickle.load(model_fh)
+
+    articles = [tuple(splitFileName(article)[:3]) for article in samples]
+    scores = []
+
+
+    #import pdb;pdb.set_trace()
+    for article in articles:
+        entities = training_embeddings.fetchArticles(article)
+        gov_scores = [score for _, score in evaluateEntities(entities, government_kw_lemmas, models).items()]
+        protestor_scores = [score for _,score in evaluateEntities(entities, protesters_kw_lemmas, models).items()]
+        avg_gov_scores = sumScores(gov_scores)
+        avg_protestor_scores = sumScores(protestor_scores)
+        scores.append({metric : (avg_gov_scores[metric] > avg_protestor_scores[metric], avg_gov_scores[metric], avg_protestor_scores[metric]) for metric in KEYS})
+    # score samples
+    print(scores)
+    # load annotator scores
+    # compare model to each annotator
+    #
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', type=str, choices=['extract', 'train', 'evaluate', 'samples'], required=True, default = "evaluate")
-    parser.add_argument('--emb_file', type=str, default="all_tok_embedding.pkl")
-    parser.add_argument('--model_file', type=str, default="nrc_model.pkl")
-    parser.add_argument('--results_file', type=str, default="nrc_results.json")
+    parser.add_argument('--mode', type=str, choices=['extract', 'train', 'evaluate', 'samples', 'subj_eval'], required=True, default = "evaluate")
+    parser.add_argument('--emb_file', type=str, default="all_article_entity_adj_embedding.pkl")
+    parser.add_argument('--model_file', type=str, default="all_article_nrc_models.pkl")
+    parser.add_argument('--results_file', type=str, default="all_article_nrc_results.json")
+    parser.add_argument('--search_entities', action='store_true')
     parser.add_argument('--use_all_verbs', action='store_true')
-    parser.add_argument('--use_all_pos', action='store_true')
+    parser.add_argument('--use_all_nrc', action='store_true')
     parser.add_argument('--use_coref', action='store_true')
     args = parser.parse_args()
 
     articles = getArticleList(data_path)
+    nrc_file = '../frames/NRC-VAD-Lexicon.txt'
 
     if args.mode == 'extract':
         extractEmbeddings(args, articles)
@@ -481,3 +598,5 @@ if __name__ == "__main__":
         evaluateModels(articles, args) #training_embs, models)
     elif args.mode == 'samples':
         createExamples(articles, args)
+    elif args.mode == "subj_eval":
+        subjectiveEvaluation(articles, args)
