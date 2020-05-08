@@ -8,3 +8,8 @@ src/*.txt
 our_training_data/*
 our_articles/*
 data_collection_clean/*
+*.pkl
+*.json
+*.csv
+*.log
+*.txt
